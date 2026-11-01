@@ -1,0 +1,15 @@
+{
+  "required": true,
+  "package": "com.atlas.cctextselect.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "minVersion": "0.8",
+  "client": [
+    "client.FixedWidthFontRendererAccessor",
+    "client.TerminalWidgetMixin"
+  ],
+  "mixins": [
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
