@@ -1,9 +1,7 @@
-package com.atlas.cctextselect.mixin.client;
+package com.brickmasterhunt.cctextselect.mixin.client;
 
-import com.mojang.blaze3d.vertex.PoseStack;
-import com.mojang.blaze3d.vertex.Tesselator;
+import com.llamalad7.mixinextras.sugar.Local;
 import dan200.computercraft.client.gui.widgets.TerminalWidget;
-import dan200.computercraft.client.render.RenderTypes;
 import dan200.computercraft.client.render.text.FixedWidthFontRenderer;
 import dan200.computercraft.core.input.UserComputerInput;
 import dan200.computercraft.core.terminal.Palette;
@@ -12,8 +10,9 @@ import dan200.computercraft.core.terminal.Terminal;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.network.chat.Component;
+import org.joml.Matrix3f;
+import org.joml.Vector3f;
 import org.lwjgl.glfw.GLFW;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -25,8 +24,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import static dan200.computercraft.client.render.ComputerBorderRenderer.BORDER;
-import static dan200.computercraft.client.render.text.FixedWidthFontRenderer.FONT_HEIGHT;
-import static dan200.computercraft.client.render.text.FixedWidthFontRenderer.FONT_WIDTH;
+import static dan200.computercraft.client.render.RenderTypes.FULL_BRIGHT_LIGHTMAP;
+import static dan200.computercraft.client.render.text.FixedWidthFontRenderer.*;
 
 @Mixin(TerminalWidget.class)
 public class TerminalWidgetMixin {
@@ -204,119 +203,101 @@ public class TerminalWidgetMixin {
         cir.setReturnValue(true); // prevent default computer mouseUp handling
     }
 
+    @Unique
+    private void ccselect$renderHint(GuiGraphics graphics) {
+        Minecraft mc = Minecraft.getInstance();
+        int termWidthPx = terminal.getWidth() * FONT_WIDTH;
+        int hintWidth = mc.font.width(HINT_TEXT);
+
+        int x = innerX + termWidthPx - hintWidth - HINT_PADDING;
+        int y = (innerY - BORDER) - mc.font.lineHeight - HINT_PADDING;
+        if (x < 4) x = 4;
+
+        graphics.fill(x - 4, y - 2, x + hintWidth + 4, y + mc.font.lineHeight + 2, 0xAA000000);
+        graphics.drawString(mc.font, Component.literal(HINT_TEXT), x, y, 0xFFCCCCCC);
+    }
+
     @Inject(method = "renderWidget(Lnet/minecraft/client/gui/GuiGraphics;IIF)V", at = @At("TAIL"))
-    private void ccselect$renderSelection(GuiGraphics graphics, int mouseX, int mouseY, float partialTicks, CallbackInfo ci) {
-        // If there's no selection, only draw the hint when the user is in selection mode.
-        if (!ccselect$hasSelection) {
-            if (ccselect$isSelectingMode()) {
-                // Draw the selection hint (top-right above the terminal)
-                Minecraft mc = Minecraft.getInstance();
-                int termWidthPx = terminal.getWidth() * FONT_WIDTH;
-                int hintWidth = mc.font.width(HINT_TEXT);
+    private void ccselect$renderSelection(GuiGraphics graphics, int mouseX, int mouseY, float partialTicks, CallbackInfo ci, @Local(name = "emitter") FixedWidthFontRenderer.QuadEmitter emitter) {
+        if (ccselect$hasSelection) {
+            int minY = Math.min(ccselect$startY, ccselect$endY);
+            int maxY = Math.max(ccselect$startY, ccselect$endY);
 
-                int x = innerX + termWidthPx - hintWidth - HINT_PADDING;
-                int y = (innerY - BORDER) - mc.font.lineHeight - HINT_PADDING;
-                if (x < 4) x = 4;
+            // Draw selection backgrounds, merge adjacent cells that have the same original foreground color.
+            for (int y = minY; y <= maxY; y++) {
+                int startX = (y == minY) ? Math.min(ccselect$startX, ccselect$endX) : 0;
+                int endX = (y == maxY) ? Math.max(ccselect$startX, ccselect$endX) : terminal.getWidth() - 1;
 
-                graphics.fill(x - 4, y - 2, x + hintWidth + 4, y + mc.font.lineHeight + 2, 0xAA000000);
-                graphics.drawString(mc.font, Component.literal(HINT_TEXT), x, y, 0xFFCCCCCC);
+                // Clamp to terminal bounds
+                startX = clamp(startX, 0, terminal.getWidth() - 1);
+                endX = clamp(endX, 0, terminal.getWidth() - 1);
+
+                TextBuffer textColour = terminal.getTextColourLine(y);
+
+                int runStart = startX;
+                int runColour = terminal.getPalette().getRenderColours(
+                    FixedWidthFontRenderer.getColour(textColour.charAt(startX),
+                        dan200.computercraft.core.util.Colour.BLACK)
+                );
+
+                for (int x = startX + 1; x <= endX + 1; x++) {
+                    int colour = x <= endX
+                        ? terminal.getPalette().getRenderColours(
+                            FixedWidthFontRenderer.getColour(textColour.charAt(x),
+                                dan200.computercraft.core.util.Colour.BLACK)
+                        )
+                        : -1;
+
+                    if (colour != runColour) {
+                        float px = innerX + runStart * FONT_WIDTH;
+                        float py = innerY + y * FONT_HEIGHT;
+                        float width = (x - runStart) * FONT_WIDTH;
+
+                        FixedWidthFontRenderer.drawQuad(emitter, px, py, 0, width, FONT_HEIGHT, runColour, FULL_BRIGHT_LIGHTMAP);
+
+                        runStart = x;
+                        runColour = colour;
+                    }
+                }
             }
-            return;
+
+            // Draw text characters with the background colour instead.
+            for (int y = minY; y <= maxY; y++) {
+                int startX = (y == minY)
+                        ? Math.min(ccselect$startX, ccselect$endX)
+                        : 0;
+
+                int endX = (y == maxY)
+                        ? Math.max(ccselect$startX, ccselect$endX)
+                        : terminal.getWidth() - 1;
+
+                startX = clamp(startX, 0, terminal.getWidth() - 1);
+                endX = clamp(endX, 0, terminal.getWidth() - 1);
+
+                TextBuffer text = terminal.getLine(y);
+                TextBuffer bgColour = terminal.getBackgroundColourLine(y);
+
+                for (int x = startX; x <= endX; x++) {
+                    int glyph = text.charAt(x);
+                    if (glyph > 255) glyph = '?';
+
+                    int glyphColour = terminal.getPalette().getRenderColours(
+                            FixedWidthFontRenderer.getColour(bgColour.charAt(x),
+                                dan200.computercraft.core.util.Colour.BLACK)
+                    );
+
+                    FixedWidthFontRendererAccessor.callDrawChar(emitter, innerX + x * FONT_WIDTH, innerY + y * FONT_HEIGHT, glyph, glyphColour, FULL_BRIGHT_LIGHTMAP);
+                }
+            }
+
+            // Really hate this solution but whatever I'm not gonna deal with the mixin BS to threadlocal copy ts or sum shit
+            emitter.poseMatrix().translate(0.0f, 0.0f, -FixedWidthFontRendererAccessor.getZOffset());
         }
 
-        int minY = Math.min(ccselect$startY, ccselect$endY);
-        int maxY = Math.max(ccselect$startY, ccselect$endY);
-
-        PoseStack pose = graphics.pose();
-        MultiBufferSource.BufferSource bufferSource = MultiBufferSource.immediate(Tesselator.getInstance().getBuilder());
-        var emitter = FixedWidthFontRenderer.toVertexConsumer(pose, bufferSource.getBuffer(RenderTypes.TERMINAL));
-
-
-        // Draw each selected line fragment by inverting foreground/background for that substring.
-        for (int y = minY; y <= maxY; y++) {
-            int startX = (y == minY) ? Math.min(ccselect$startX, ccselect$endX) : 0;
-            int endX = (y == maxY) ? Math.max(ccselect$startX, ccselect$endX) : terminal.getWidth() - 1;
-
-            // defensive clamp
-            startX = clamp(startX, 0, terminal.getWidth() - 1);
-            endX = clamp(endX, 0, terminal.getWidth() - 1);
-
-            // Use terminal colour buffers to swap fg/bg for selection
-            TextBuffer text = terminal.getLine(y);
-            TextBuffer textColour = terminal.getTextColourLine(y);
-            TextBuffer bgColour = terminal.getBackgroundColourLine(y);
-
-            // If any buffer is null (shouldn't be), fall back to a translucent overlay + redraw chars white
-            if (text == null || textColour == null || bgColour == null) {
-                // fallback overlay (semi-transparent)
-                int px1 = innerX + startX * FONT_WIDTH;
-                int py1 = innerY + y * FONT_HEIGHT;
-                int px2 = innerX + (endX + 1) * FONT_WIDTH;
-                int py2 = py1 + FONT_HEIGHT;
-                graphics.fill(px1, py1, px2, py2, SELECTION_BG_FALLBACK);
-                continue;
-            }
-
-            // Build the TextBuffers for the text and swapped text-colours (fg/bg swapped)
-            StringBuilder sliceTextSb = new StringBuilder(endX - startX + 1);
-            StringBuilder sliceTextColSb = new StringBuilder(endX - startX + 1);
-
-            for (int i = startX; i <= endX; i++) {
-                sliceTextSb.append(text.charAt(i));
-                // for glyph rendering use the *background* colour as the glyph (swapped)
-                sliceTextColSb.append(bgColour.charAt(i));
-            }
-
-            TextBuffer sliceText = new TextBuffer(sliceTextSb.toString());
-            TextBuffer sliceTextCol = new TextBuffer(sliceTextColSb.toString());
-
-            float drawX = innerX + startX * FONT_WIDTH;
-            float drawY = innerY + y * FONT_HEIGHT;
-
-            Palette palette = terminal.getPalette();
-
-            // Fill each cell with the original glyph colour (so selection background becomes original glyph colour).
-            // Draw glyphs explicitly using the original background colour (so glyphs become the original background).
-            int light = 0xF0;
-
-            for (int i = startX; i <= endX; i++) {
-                float px = innerX + i * FONT_WIDTH;
-                float py = innerY + y * FONT_HEIGHT;
-
-                // original foreground index (0..15) -> rgb
-                int origFgIndex = FixedWidthFontRenderer.getColour(textColour.charAt(i), dan200.computercraft.core.util.Colour.BLACK);
-                int origFgRgb = palette.getRenderColours(origFgIndex);
-                // fill with original glyph colour (the "inverted" background)
-                graphics.fill((int)px, (int)py, (int)(px + FONT_WIDTH), (int)(py + FONT_HEIGHT), 0xFF000000 | origFgRgb);
-
-                // glyph index and clamp as FixedWidthFontRenderer.drawString does
-                int glyphIndex = text.charAt(i);
-                if (glyphIndex > 255) glyphIndex = '?';
-
-                // glyph colour should be the original background colour -> palette index -> rgb
-                int glyphPaletteIndex = FixedWidthFontRenderer.getColour(bgColour.charAt(i), dan200.computercraft.core.util.Colour.BLACK);
-                int glyphRgb = palette.getRenderColours(glyphPaletteIndex);
-
-                FixedWidthFontRendererAccessor.callDrawChar(emitter, px, py, glyphIndex, glyphRgb, light);
-            }
-
-        }
-
-        // Flush the vertex buffer
-        bufferSource.endBatch();
-
-        // Draw the selection hint (when in selection mode)
+        // Draw the hint if the user is in selection mode.
+        // This needs to be done after now because GuiGraphics flushes the buffer on you.
         if (ccselect$isSelectingMode()) {
-            Minecraft mc = Minecraft.getInstance();
-            int termWidthPx = terminal.getWidth() * FONT_WIDTH;
-            int hintWidth = mc.font.width(HINT_TEXT);
-
-            int x = innerX + termWidthPx - hintWidth - HINT_PADDING;
-            int y = (innerY - BORDER) - mc.font.lineHeight - HINT_PADDING;
-            if (x < 4) x = 4;
-
-            graphics.fill(x - 4, y - 2, x + hintWidth + 4, y + mc.font.lineHeight + 2, 0xAA000000);
-            graphics.drawString(mc.font, Component.literal(HINT_TEXT), x, y, 0xFFCCCCCC);
+            ccselect$renderHint(graphics);
         }
     }
 

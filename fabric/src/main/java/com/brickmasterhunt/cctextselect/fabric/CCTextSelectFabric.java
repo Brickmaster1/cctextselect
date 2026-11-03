@@ -1,6 +1,6 @@
-package com.atlas.cctextselect.fabric;
+package com.brickmasterhunt.cctextselect.fabric;
 
-import com.atlas.cctextselect.CCTextSelect;
+import com.brickmasterhunt.cctextselect.CCTextSelect;
 import net.fabricmc.api.ModInitializer;
 
 public final class CCTextSelectFabric implements ModInitializer {

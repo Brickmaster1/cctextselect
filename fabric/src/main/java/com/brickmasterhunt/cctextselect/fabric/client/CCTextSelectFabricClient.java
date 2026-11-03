@@ -1,4 +1,4 @@
-package com.atlas.cctextselect.fabric.client;
+package com.brickmasterhunt.cctextselect.fabric.client;
 
 import net.fabricmc.api.ClientModInitializer;
 
